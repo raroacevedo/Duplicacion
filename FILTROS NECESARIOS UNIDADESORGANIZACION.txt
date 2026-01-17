@@ -1,0 +1,5 @@
+Filtros     
+Organization=UPBVirtual y tambien upbvirtual (OJO LOS 2)
+Type=Course Offering
+IsActive=TRUE
+Descargar como XLSX
