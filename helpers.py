@@ -90,7 +90,9 @@ def create_chrome_driver():
     # Desactivar el gestor de contraseñas de Chrome
     chrome_prefs = {
         "credentials_enable_service": False,  # Desactiva el guardado automático de contraseñas
-        "profile.password_manager_enabled": False  # Desactiva el gestor de contraseñas
+        "profile.password_manager_enabled": False,  # Desactiva el gestor de contraseñas
+        "profile.default_content_setting_values.local_network": 1,  # Evita el popup de red local permitiendo sin prompt
+        "profile.default_content_setting_values.notifications": 2,  # Desactiva notificaciones
     }
     chrome_options.add_experimental_option("prefs", chrome_prefs)
 
