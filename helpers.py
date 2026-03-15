@@ -7,6 +7,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from time import sleep
+import os
+import logging
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import NamedStyle
 
@@ -17,12 +19,32 @@ import pandas as pd
 import openpyxl
 import re
 
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_banner_nrc(value):
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return ""
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text
+
+
+def normalize_banner_periodo(value):
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return ""
+    try:
+        return str(int(float(text)))
+    except (TypeError, ValueError):
+        digits = "".join(ch for ch in text if ch.isdigit())
+        return digits if digits else text
+
 """The brightspace_login method receives three arguments: the chromedriver, the user and the password of the Virtual Campus admin.
 # If the login is succesful, it return True, otherwise, it returns False.
 """
-path="courses.xlsx"
-unidades_path="UnidadesOrganización.xlsx"
-
 def brightspace_login(driver):
     try:
         print("\n")
@@ -49,7 +71,7 @@ def brightspace_login(driver):
         sleep(3)
         
         
-        #2FA
+        #2FA ESTE USUARIO NO TIENE 2FA, PERO DEJÓ EL CÓDIGOS POR SI SE NECESITA IMPLEMENTAR EN EL FUTURO
         """driver.get("https://virtual.upb.edu.co/d2l/lp/auth/twofactorauthentication/TwoFactorCodeEntry.d2l")
         
         l2fa = WebDriverWait(driver, 3).until(
@@ -59,7 +81,8 @@ def brightspace_login(driver):
         l2fa.send_keys(Keys.RETURN)"""
 
         return True
-    except:
+    except Exception:
+        logger.exception("Error al tratar de iniciar sesión en Brightspace.")
         print(
             "Hubo un error al tratar de iniciar sesión. Revise sus credenciales e intente de nuevo."
         )
@@ -71,35 +94,36 @@ def brightspace_login(driver):
 It returns the created driver.
 """
 
-
 def create_chrome_driver():
-    # service object
-    #s = Service(r".\ChromeU\chromedriver-win64\chromedriver.exe")
-    s = Service(r"..\Chrome\chromedriver.exe")
+    """Configura y retorna el WebDriver con opciones seguras sin el prompt de red local"""
+    service = Service(r"..\Chrome\chromedriver.exe")
 
-    # chrome options to run on headless mode and no logging on the terminal
-    chrome_options = Options()
-    chrome_options.add_argument("--disable-extensions")
-    # chrome_options.add_argument("--headless")  # Si deseas correr en modo headless
-
-    # Ocultar mensajes de DevTools y logs en la terminal
-    chrome_options.add_argument("--log-level=3")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-
-    # Desactivar el gestor de contraseñas de Chrome
-    chrome_prefs = {
-        "credentials_enable_service": False,  # Desactiva el guardado automático de contraseñas
-        "profile.password_manager_enabled": False,  # Desactiva el gestor de contraseñas
-        "profile.default_content_setting_values.local_network": 1,  # Evita el popup de red local permitiendo sin prompt
-        "profile.default_content_setting_values.notifications": 2,  # Desactiva notificaciones
+    # Verifica si el chromedriver existe en la ruta especificada
+    if not os.path.exists(service.path):    
+        raise FileNotFoundError(f"El chromedriver no se encuentra en la ruta: {service.path}")
+    
+    # Configuración de opciones del navegador
+    options = Options()
+    options.add_argument("--disable-extensions")
+    options.add_argument("--incognito")              
+    options.add_argument("--disable-notifications")  
+    options.add_argument("--allow-insecure-localhost") 
+    options.add_argument("--log-level=3")
+    
+    # --- NUEVOS PARÁMETROS PARA OMITIR EL MENSAJE DE RED LOCAL ---
+    # 1. Deshabilita la característica que hace saltar el aviso de seguridad
+    options.add_argument("--disable-features=LocalNetworkAccessChecks")
+    
+    # 2. Inyecta preferencias directas al perfil para autoconceder el permiso si llega a ser requerido
+    prefs = {
+        "profile.managed_default_content_settings.local_network_access": 1
     }
-    chrome_options.add_experimental_option("prefs", chrome_prefs)
+    options.add_experimental_option("prefs", prefs)
+    # -------------------------------------------------------------
 
-    # Instanciar el webdriver
-    driver = webdriver.Chrome(service=s, options=chrome_options)
-    driver.implicitly_wait(40)
-
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.implicitly_wait(10)
+    
     return driver
 
 
@@ -120,7 +144,6 @@ def check_courses_file(courses):
 
 """The read_courses_url receives the file path containint the URLs. It checks if the file is ok, and returns the dataframe containint the information."""
 
-
 def read_courses_url(course_file_path):
     try:
         # read the courses
@@ -132,7 +155,8 @@ def read_courses_url(course_file_path):
             return False
 
         return courses_url
-    except:
+    except Exception:
+        logger.exception("Error leyendo el archivo de URL de cursos: %s", course_file_path)
         print(
             "Hubo un error leyendo el archivo de la URL de los cursos. Revise sus entradas e intente de nuevo."
         )
@@ -184,6 +208,7 @@ def get_course_shortnames(driver, courses_file_path):
             # append the current course to the resulting dataframe
             course_info.append((short_name_value, short_name_value[-5:]))
         except Exception as e:
+            logger.exception("Error obteniendo shortname para URL %s", current_course_url)
             print(e)
 
     # write the resulting file
@@ -197,7 +222,6 @@ def get_course_shortnames(driver, courses_file_path):
 # the courses we want to duplicate in D2L Brightspace.
 # It checks that the file is in the correct form, returns True if it is, False otherwise.
 """
-
 
 def check_courses_file(courses):
     # get the dataframe columns
@@ -225,125 +249,536 @@ def check_courses_file(courses):
 # Returns True if the course was duplicated, False otherwise.
 """
 
+# STEP 1. COURSE TEMPLATE
 def select_course_template(driver, course):
-    # STEP 1. COURSE TEMPLATE
     # find the select course template item, and wait for it to load
-    templateSelect = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "#oldCTId_id",
-            )
-        )
-    )
-    templateSelectObject = Select(templateSelect)
+    wait = WebDriverWait(driver, 15)
 
-    # select the given course template by value
-    templateSelectObject.select_by_value(str(course["Plantilla"]))
+    # 1) Host 1 (shadow root 0)
+    host1 = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#LitId")))
+    shadow0 = host1.shadow_root
 
-    # wait for the next button and then click it
-    nextBtn = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "body > form > table > tbody > tr > td > table > tbody > tr:nth-child(5) > td:nth-child(2) > table > tbody > tr > td:nth-child(2) > input",
-            )
-        )
+    # 2) Host 2 (shadow root 1)
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Host 3 (el botón; OJO: d2l-button-subtle ES el host clickable)
+    btn_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "d2l-button-subtle[type='button']"))
+    btn_shadow = btn_host.shadow_root
+
+    # Busca un <button> interno o un slot clickeable (dependiendo del componente)
+    inner_btn = wait.until(lambda d: btn_shadow.find_element(By.CSS_SELECTOR, "button, [role='button']"))
+
+    try:
+        inner_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", inner_btn)
+    
+    #
+    # Obtener el valor de la plantilla a seleccionar desde el DataFrame y asignarlo a una variable, asegurando que sea texto limpio
+    #
+    valorplantilla = str(course["Plantilla"])
+
+    print(f"Seleccionando plantilla: {valorplantilla}")
+
+    # Host 1
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+
+    # Host 2
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Host 3
+    host3 = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "d2l-create-course-change-template-view"))
+    shadow2 = host3.shadow_root
+
+    # Host 4
+    host4 = wait.until(lambda d: shadow2.find_element(By.CSS_SELECTOR, "#searchTemplate"))
+    shadow3 = host4.shadow_root
+
+    # Host 5 (d2l-input-text)
+    input_host = wait.until(
+        lambda d: shadow3.find_element(By.CSS_SELECTOR, "d2l-input-text[placeholder='Buscar plantillas de cursos']")
     )
-    nextBtn.click()
+    input_shadow = input_host.shadow_root
+
+    # Buscar el input real dentro del shadow del componente
+    real_input = wait.until(lambda d: input_shadow.find_element(By.CSS_SELECTOR, "input, textarea"))
+
+    # Limpiar y escribir
+    real_input.click()
+    real_input.send_keys(Keys.CONTROL, "a")
+    real_input.send_keys(Keys.BACKSPACE)
+    real_input.send_keys(valorplantilla)
+    real_input.send_keys(Keys.ENTER)
+
+    sleep(2)  # Esperar a que se carguen los resultados de la búsqueda 
+  
+    #
+    # Buscar el botón de selección (un elemento con role="button") buscar plantilla
+    #
+    # 1) Host 1
+    """ Con el enter se elimina la necesidad de hacer click en el botón de búsqueda, pero dejo este código comentado por si se necesita hacer click manualmente (dependiendo de la velocidad de carga, a veces el enter no funciona porque el botón no está listo)
+   
+    # 2) Host 2
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+    
+
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Host 3
+    host3 = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "d2l-create-course-change-template-view"))
+    shadow2 = host3.shadow_root
+
+    # 4) Host 4
+    host4 = wait.until(lambda d: shadow2.find_element(By.CSS_SELECTOR, "#searchTemplate"))
+    shadow3 = host4.shadow_root
+
+    # 5) Botón icono (HOST)
+    btn_host = wait.until(lambda d: shadow3.find_element(By.CSS_SELECTOR, "d2l-button-icon[type='button']"))
+
+    # Click normal o fallback JS
+    try:
+        btn_host.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", btn_host)
+     """
+    
+    #
+    #seleccionar el primer resultado (asumiendo que es el correcto)
+    #
+    # 1) Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # 2) Host 2
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Host 3
+    host3 = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "d2l-create-course-change-template-view"))
+    shadow2 = host3.shadow_root
+
+    # 4) d2l-selection-input con key dinámico (ARMAMOS SELECTOR)
+    sel_css = f"d2l-selection-input[key='{valorplantilla}']"
+    sel_host = wait.until(lambda d: shadow2.find_element(By.CSS_SELECTOR, sel_css))
+
+    # 5) Click al checkbox id d2l-uid-*)
+    try:
+        sel_host.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", sel_host)
+    
+    #
+    # Dar cklick en el botón de guardar (que también está dentro de shadow DOMs)
+    # Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # Host 2
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Host 3 (diálogo)
+    dlg_host = wait.until(lambda d: shadow1.find_element(
+        By.CSS_SELECTOR,
+        "d2l-create-course-dialog[dialog-title='Cambiar plantilla del curso']"
+    ))
+    dlg_shadow = dlg_host.shadow_root
+
+    # Botón (tu ruta actual)
+    save_btn = wait.until(lambda d: dlg_shadow.find_element(
+        By.CSS_SELECTOR,
+        "d2l-dialog-fullscreen:nth-child(1) > d2l-button:nth-child(2)"
+    ))
+
+    try:
+        save_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", save_btn)
+
     sleep(2)  # wait for the next page to load
 
 
-def course_offering_details(driver, course):
-    # STEP 2. COURSE OFFERING DETAILS
-    # wait for the course offering name input field and then fill it
-    courseOfferingName = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "#courseOfferingName_id",
-            )
-        )
-    )
-    courseOfferingName.send_keys(course["Nombre"])
+# STEP 2. COURSE SEMESTRE
+def select_course_semestre(driver, course):
+    #buscar el select de semestre y seleccionar el semestre correspondiente al curso
+    wait = WebDriverWait(driver, 15)
 
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Menos rígido: solo por el mensaje de validación
+    host3 = wait.until(lambda d: shadow1.find_element(
+        By.CSS_SELECTOR,
+        "d2l-button-subtle-form-element[validation-error-dialog-message='Se requiere Semestre.']"
+    ))
+    shadow2 = host3.shadow_root
+
+    btn_host = wait.until(lambda d: shadow2.find_element(By.CSS_SELECTOR, "d2l-button-subtle[type='button']"))
+
+    try:
+        btn_host.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", btn_host)
+
+    #
+    # Obtener el valor del semestre a seleccionar desde el DataFrame y asignarlo a una variable, asegurando que sea texto limpio
+    #
+    valor_semestre = str(course["Semestre"])
+
+    print(f"Seleccionando semestre: {valor_semestre}")
+
+    # Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # Host 2
+    #host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Host 3
+    sem_selector = wait.until(lambda d: shadow1.find_element(
+        By.CSS_SELECTOR, "d2l-semester-selector[semester-ancestor-id='6606']"
+    ))
+    shadow2 = sem_selector.shadow_root
+
+    # Host 4
+    container = wait.until(lambda d: shadow2.find_element(
+        By.CSS_SELECTOR, ".align-search-semester-for-inline-container"
+    ))
+    shadow3 = container.shadow_root
+
+    # Host 5 (d2l-input-text)
+    input_host = wait.until(lambda d: shadow3.find_element(
+        By.CSS_SELECTOR, "d2l-input-text[placeholder='Buscar por {semestre}']"
+    ))
+    input_shadow = input_host.shadow_root
+
+    # Input real dentro del webcomponent
+    real_input = wait.until(lambda d: input_shadow.find_element(By.CSS_SELECTOR, "input, textarea"))
+
+    # Limpiar y escribir
+    real_input.click()
+    real_input.send_keys(Keys.CONTROL, "a")
+    real_input.send_keys(Keys.BACKSPACE)
+    real_input.send_keys(valor_semestre)
+    real_input.send_keys(Keys.ENTER) ##se hace enter para evitar el click en el botón de búsqueda
+
+    sleep(2)  # Esperar a que se carguen los resultados de la búsqueda
+
+    #
+    #seleccionar el primer resultado (asumiendo que es el correcto)
+    #
+    # 1) Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # Host 2
+    #host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Host 3
+    sem_host = wait.until(lambda d: shadow1.find_element(
+        By.CSS_SELECTOR, "d2l-semester-selector[semester-ancestor-id='6606']"
+    ))
+    shadow2 = sem_host.shadow_root
+
+    # Espera a que haya al menos un resultado en la lista
+    first_item = wait.until(lambda d: shadow2.find_elements(By.CSS_SELECTOR, "d2l-selection-input")[0])
+
+    # Click directo al host (rápido, como tu Optimización 2)
+    try:
+        first_item.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", first_item)
+
+    #
+    # Dar cklick en el botón de guardar (que también está dentro de shadow DOMs)
+    # Host 1
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
+
+    # Host 2
+    #host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # Host 3 (selector de semestre)
+    sem_host = wait.until(lambda d: shadow1.find_element(
+        By.CSS_SELECTOR, "d2l-semester-selector[semester-ancestor-id='6606']"
+    ))
+    shadow2 = sem_host.shadow_root
+
+    # Host 4 (botón done) -> CLICK DIRECTO AL HOST
+    done_btn = wait.until(lambda d: shadow2.find_element(
+        By.CSS_SELECTOR, "d2l-button[type='button'][data-dialog-action='done']"
+    ))
+
+    try:
+        done_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", done_btn)
+
+    sleep(2) # wait for the next page to load
+
+#
+# The course_offering_details method receives the chromedriver and a row of the courses dataframe.
+#
+def course_offering_details(driver, course, banner_lookup):
+    # STEP 3. COURSE OFFERING DETAILS
+
+    # Esperar a que cargue el formulario de detalles del curso (que también tiene shadow DOMs) y llenar los campos de nombre y código del curso
+    wait = WebDriverWait(driver, 15)
+    valor_nombre = str(course["Nombre"]) #nombre del curso a ingresar, asegurando que sea texto limpio
+
+    # 1) Host raíz
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+
+    # 2) Vista crear curso
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Componente del nombre (host con id estable)
+    name_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "#course-name-input"))
+    name_shadow = name_host.shadow_root
+
+    # 4) Input real interno (estable)
+    real_input = wait.until(lambda d: name_shadow.find_element(By.CSS_SELECTOR, "input, textarea"))
+
+    # 5) Limpiar + escribir
+    real_input.click()
+    real_input.send_keys(Keys.CONTROL, "a")
+    real_input.send_keys(Keys.BACKSPACE)
+    real_input.send_keys(valor_nombre)
+    
+    #
     # wait for the course offering code input field and then fill it
-    courseOfferingCode = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "#courseOfferingCode_id",
-            )
-        )
-    )
-    courseOfferingCode.send_keys(course["Codigo"])
+    #
+    valor_codigo = str(course["Codigo"]) #código del curso a ingresar, asegurando que sea texto limpio
 
-    # find the select course template item, and wait for it to load
-    semesterSelect = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "#semId_id",
-            )
-        )
-    )
-    semesterSelectObject = Select(semesterSelect)
+    # 1) Host raíz
+    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    #shadow0 = host1.shadow_root
 
-    # select the given course template by value
-    semesterSelectObject.select_by_value(str(course["Semestre"]))
+    # 2) Vista crear curso
+    #host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
 
-    # find the next button and wait for it to load
-    courseNextBtn = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "body > form > table > tbody > tr > td > table > tbody > tr:nth-child(5) > td:nth-child(2) > table > tbody > tr > td:nth-child(3) > input",
-            )
+    # 3) Componente del código
+    code_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "#course-code-input"))
+    code_shadow = code_host.shadow_root
+
+    # 4) Input real interno
+    real_input = wait.until(lambda d: code_shadow.find_element(By.CSS_SELECTOR, "input, textarea"))
+
+    # 5) Limpiar + escribir
+    real_input.click()
+    real_input.send_keys(Keys.CONTROL, "a")
+    real_input.send_keys(Keys.BACKSPACE)
+    real_input.send_keys(valor_codigo)
+
+    sleep(2)  # wait for the next page to load
+
+    #
+    # Agregar fecha de inicio y fin del curso datos se extraen desde Banner
+    #
+
+    #Desde este codigo se busca el NRC es el dato despues del ultimo "-" 
+    # y se extrae el periodo desde el mismo codigo esta despeus del segundo guion, 
+    # asegurar que es los primero 6 digitos, por ejemplo: CODIGO-202440-12345 -> periodo: 202440, NRC: 12345
+    codigo_parts = valor_codigo.split("-")
+    if len(codigo_parts) < 2:
+        raise ValueError(
+            f"El código del curso '{valor_codigo}' no tiene formato esperado para extraer período y NRC."
         )
-    )
-    courseNextBtn.click()
-    sleep(4)
+
+    nrc = normalize_banner_nrc(codigo_parts[-1])
+    periodo = normalize_banner_periodo(codigo_parts[-2][:6])
+    if not nrc or not periodo:
+        raise ValueError(
+            f"No fue posible extraer NRC/período desde el código del curso '{valor_codigo}'."
+        )
+
+    # Buscar la fecha de inicio y fin en el lookup de Banner precargado
+    banner_key = (nrc, periodo)
+
+    banner_dates = banner_lookup.get(banner_key)
+    if not banner_dates:
+        raise ValueError(
+            "No se encontró información en Banner para "
+            f"NRC '{nrc}' y período '{periodo}' (clave buscada: {banner_key})."
+        )
+
+    fecha_inicio, fecha_fin = banner_dates
+
+    #agregar la fecha de inicio 
+    valor_fecha_inicio = str(fecha_inicio)
+    valor_fecha_fin = str(fecha_fin)
+
+    # 1) Host raíz
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+
+    # 2) Vista principal
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Componente de rango de fechas
+    date_range_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "#date-range-input"))
+
+    # 4) Buscar todos los inputs profundos dentro del shadow DOM
+    inputs = find_inputs_deep(driver, date_range_host)
+
+    # 5) Filtrar inputs visibles/habilitados
+    valid_inputs = []
+    for inp in inputs:
+        try:
+            if inp.is_displayed() and inp.is_enabled():
+                valid_inputs.append(inp)
+        except Exception:
+            continue
+
+    if not valid_inputs:
+        raise Exception(
+            "No se encontraron inputs visibles y habilitados dentro de #date-range-input. "
+            "El componente puede no haber terminado de renderizar o su estructura cambió."
+        )
+
+    # 6) Tomar el primer input como fecha inicio
+    fecha_inicio_input = valid_inputs[0]
+
+    # 6) Tomar el segundo input como fecha final
+    fecha_fin_input = valid_inputs[1]
+
+    # 7) Limpiar y escribir la fecha de inicio (con manejo de excepciones para inputs difíciles)
+    try:
+        fecha_inicio_input.click()
+        fecha_inicio_input.send_keys(Keys.CONTROL, "a")
+        fecha_inicio_input.send_keys(Keys.BACKSPACE)
+        fecha_inicio_input.send_keys(valor_fecha_inicio)
+    except Exception:
+        driver.execute_script("""
+            const el = arguments[0];
+            const value = arguments[1];
+            el.focus();
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        """, fecha_inicio_input, valor_fecha_inicio)
+    
+    # 8) Limpiar y escribir la fecha de fin (con manejo de excepciones para inputs difíciles)
+    try:
+        fecha_fin_input.click()
+        fecha_fin_input.send_keys(Keys.CONTROL, "a")
+        fecha_fin_input.send_keys(Keys.BACKSPACE)
+        fecha_fin_input.send_keys(valor_fecha_fin)
+    except Exception:
+        driver.execute_script("""
+            const el = arguments[0];
+            const value = arguments[1];
+            el.focus();
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        """, fecha_fin_input, valor_fecha_fin)
+
+    sleep(2)
+
+#buscar recursivamente dentro de un shadow DOM dado un host raíz, y devolver todos los elementos input 
+# o textarea encontrados (incluso si están anidados dentro de múltiples niveles de shadow DOM)
+def find_inputs_deep(driver, root_host):
+    script = """
+    function collectInputsDeep(root) {
+        let results = [];
+
+        function walk(nodeRoot) {
+            if (!nodeRoot) return;
+
+            const directInputs = nodeRoot.querySelectorAll('input, textarea');
+            directInputs.forEach(el => results.push(el));
+
+            const all = nodeRoot.querySelectorAll('*');
+            for (const el of all) {
+                if (el.shadowRoot) {
+                    walk(el.shadowRoot);
+                }
+            }
+        }
+
+        walk(root_host.shadowRoot);
+        return results;
+    }
+
+    const root_host = arguments[0];
+    return collectInputsDeep(root_host);
+    """
+    return driver.execute_script(script, root_host)
 
 # The confirm_course_creation method receives the chromedriver and confirms the course creation.
 # It waits for the confirm button to load, and then clicks it.
 def confirm_course_creation(driver):
-    # STEP 3. CONFIRM COURSE CREATION
+    # STEP 4. CONFIRM COURSE CREATION
     # wait for the confirm button to load, and then click it
-    confirmCourseBtn = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "body > form > table > tbody > tr > td > table > tbody > tr:nth-child(5) > td:nth-child(2) > table > tbody > tr > td:nth-child(3) > input",
-            )
-        )
-    )
-    confirmCourseBtn.click()
+
+    wait = WebDriverWait(driver, 15)
+
+    # 1) Host raíz
+    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+    shadow0 = host1.shadow_root
+
+    # 2) Vista create course
+    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+    shadow1 = host2.shadow_root
+
+    # 3) Botón guardar -> click directo al host
+    save_btn = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "d2l-button[name='saveAndManage']"))
+
+    try:
+        save_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", save_btn)   
+
     sleep(4)
 
-# The import_course_content method receives the chromedriver, the course object and the index of the course in the dataframe.
-# It imports the course content from the master course, and updates the excel file with the Bright
-def import_course_content(driver, course, index):
+# The import_course_content method receives the chromedriver, the course object,
+# the index of the course and the path of the courses file.
+# It imports the course content from the master course, and updates the excel file with the Brightspace ID.
+def import_course_content(driver, course, index, courses_path):
+
+    #extraer de la pagina actual el ID del curso recién creado desde la URL (el número después de "ou=") 
+    #para luego buscar el curso en la barra de búsqueda y así importar el contenido
+    current_url = driver.current_url
+    match = re.search(r'ou=(\d+)', current_url)
+    if match:
+        brightspace_id = match.group(1)
+        print(f"\nID de Brightspace obtenido: {brightspace_id}")
+    else:
+        print("\nNo se encontró el ID de Brightspace en la URL")
+        return
+   
+    #ir a la pagina que importa el contenido del curso (la misma para todos los cursos, 
+    #ya que el ID del curso se busca manualmente en la barra de búsqueda)
+    driver.get("https://virtual.upb.edu.co/d2l/lms/importExport/import_export.d2l?ou=" + brightspace_id)  #ID de curso genérico para importar contenido, el curso específico se selecciona en la barra de búsqueda
+
+    sleep(2)  # wait for the page to load
+
+    # Manejo de ventanas: guardar el handle de la ventana principal para luego volver a ella después de importar el contenido
     # save the current page for window handling
     mainPage = None
     while not mainPage:
-        mainPage = driver.current_window_handle
-
-    # STEP 4. COPY COURSE COMPONENTS
-
-    # click the link to copy course components
-    copyCourseComponents = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                "body > form > table > tbody > tr > td > table > tbody > tr:nth-child(4) > td:nth-child(3) > table:nth-child(8) > tbody > tr > td > li:nth-child(2) > a",
-            )
-        )
-    )
-    sleep(2)
-
-    copyCourseComponents.click()
-    sleep(2)
-
+        mainPage = driver.current_window_handle    
+    
     # click the button to search for the master course
     searchOfferBtn = WebDriverWait(driver, 20).until(
         EC.presence_of_element_located(
@@ -358,7 +793,6 @@ def import_course_content(driver, course, index):
 
     #changing the handles to access search page
     #for handle in driver.window_handles:
-    #    print (" popup - "+str(handle))
     searchPage = None
     while not searchPage:
         for handle in driver.window_handles:
@@ -371,15 +805,11 @@ def import_course_content(driver, course, index):
     sleep(2)
 
     #find the frame containing the search bar for the course offering
-    #frame = driver.find_element(By.CSS_SELECTOR, "#PopupWindow > frame:nth-child(3)")   --- sin UserWay
-    #frame = driver.find_element(By.XPATH, "/html/frameset/frame[2]")
-    #frame = driver.find_element(By.CSS_SELECTOR, "#PopupWindow > frame:nth-child(10)")  -- cambio 2023/11/15
     frame = driver.find_element(By.CSS_SELECTOR, "frame[title='Cuerpo']")
 
     driver.switch_to.frame(frame)
     sleep(2)
 
-    #searchInput = driver.find_element(By.XPATH, '//input[@id="z_b"]')
     searchInput = driver.find_element(By.CSS_SELECTOR, "#z_b")
     
     searchInput.send_keys(str(course["Maestro"]))
@@ -402,18 +832,8 @@ def import_course_content(driver, course, index):
     driver.find_element(By.CSS_SELECTOR, "#z_b").click()
     sleep(25)
     
-    # Obtener la URL actual y extraer el ID del curso
-    current_url = driver.current_url
-    match = re.search(r'copy/(\d+)/History', current_url)
-    if match:
-        brightspace_id = match.group(1)
-        print(f"\nID de Brightspace obtenido: {brightspace_id}")
-    else:
-        print("\nNo se encontró el ID de Brightspace en la URL")
-        return
-
-    # Escribir el ID en Excel sin perder formatos
-    update_excel(path, index, brightspace_id)
+    #Escribir el ID en Excel sin perder formatos
+    update_excel(courses_path, index, brightspace_id)
 
 # The update_excel method receives the file path, the row index and the brightspace_id.
 # It updates the column 'Oferta de curso - Id grupo Brightspace' without losing formats and
@@ -425,6 +845,7 @@ def update_excel(file_path, row_index, brightspace_id):
     try:
         wb = load_workbook(file_path)
     except Exception as e:
+        logger.exception("Error al abrir el archivo Excel para actualización: %s", file_path)
         print(f"\nError al abrir el archivo: {e}")
         return
 
@@ -435,13 +856,18 @@ def update_excel(file_path, row_index, brightspace_id):
         default_style = NamedStyle(name="default")
         wb.add_named_style(default_style)
         
-    brightspace_col = 6  # Columna F es la número 6 (1-based)
+    brightspace_col = 6        # Columna F es la número 6 (1-based)
     excel_row = row_index + 2  # +2 porque pandas indexa desde 0 y Excel tiene encabezado
 
     try:
         ws.cell(row=excel_row, column=brightspace_col, value=int(brightspace_id))
         print(f"\nID {brightspace_id} agregado a la fila {excel_row} correctamente")
     except Exception as e:
+        logger.exception(
+            "Error actualizando Brightspace ID en archivo %s, fila %s",
+            file_path,
+            excel_row,
+        )
         print(f"\nError actualizando la celda: {e}")
 
 
@@ -451,29 +877,23 @@ def update_excel(file_path, row_index, brightspace_id):
     wb.close()
 
     # Reemplazar el archivo original con el nuevo
-    import os
     os.replace(temp_path, file_path)
    
     
 # The new_experience method receives the chromedriver and a row of the courses dataframe.
 # It checks if the course is a QM course, and if it is, it updates the
-def new_experience(driver, row):
-    
-    # Cargar el archivo UnidadesOrganización.xlsx
-    unidades_df = pd.read_excel("UnidadesOrganización.xlsx")
+def new_experience(driver, row, courses_path, unidades_lookup):
+    # Buscar el maestro en el lookup de Unidades precargado
+    maestro_value = str(row["Maestro"]).strip()
+    name_value = unidades_lookup.get(maestro_value, "").strip()
 
-    # Buscar el maestro en UnidadesOrganización
-    maestro_value = row["Maestro"]
-    unidad = unidades_df[unidades_df["Code"] == maestro_value]
-
-    if not unidad.empty:
-        name_value = str(unidad.iloc[0]["Name"]).strip()  # Convertir a texto limpio
+    if name_value:
         qm_status = "SI" if "QM" in name_value else "NO"
 
         print(f"\nMaestro: {maestro_value} | Nombre: {name_value} | QM: {qm_status}")
 
         # Cargar el archivo Excel sin perder formatos
-        book = load_workbook(path)
+        book = load_workbook(courses_path)
         sheet = book.active  
 
         # Obtener la fila real en Excel (ajuste +2 por header)
@@ -494,13 +914,13 @@ def new_experience(driver, row):
         sheet.cell(row=row_index, column=8).value = str(ruta_plantilla)
 
         # Guardar cambios en el Excel
-        book.save(path)
+        book.save(courses_path)
         book.close()
 
         print(f"\nRuta de plantilla actualizada en el excel con: {ruta_plantilla}")
 
         # Recargar el DataFrame después de la modificación con openpyxl
-        df_actualizado = pd.read_excel(path, dtype={"Oferta de curso - Id grupo Brightspace": str})
+        df_actualizado = pd.read_excel(courses_path, dtype={"Oferta de curso - Id grupo Brightspace": str})
         row_actualizado = df_actualizado.iloc[row.name]
 
         # Ahora el código de oferta y la ruta de plantilla deben estar correctos
@@ -556,10 +976,10 @@ def new_experience(driver, row):
                 driver.switch_to.default_content()
 
                 # Escribir en Excel que se actualizó (Forma correcta)
-                book = load_workbook(path)
+                book = load_workbook(courses_path)
                 sheet = book.active
                 sheet.cell(row=row_index, column=9, value="SI")  # Columna "Se actualizo use lesson experience"
-                book.save(path)
+                book.save(courses_path)
                 book.close()
 
                 print("\nActualización de Use Lessons Experience completada, se actualiza el excel con SI.")
@@ -595,50 +1015,58 @@ def new_experience(driver, row):
                 driver.switch_to.default_content()
 
                 # Escribir en Excel que se actualizó "Content Template Path"
-                book = load_workbook(path)
+                book = load_workbook(courses_path)
                 sheet = book.active
                 sheet.cell(row=row_index, column=10, value="SI")  # Columna "Se tuvo que actualizar content template path"
-                book.save(path)
+                book.save(courses_path)
                 book.close()
 
                 print("\nActualización de Content Template Path completada, se actualiza el excel con SI.")
 
             except Exception as e:
+                logger.exception(
+                    "Error al procesar el curso '%s' en new_experience.",
+                    row.get("Nombre", "N/A"),
+                )
                 print(f"\nError al procesar el curso {row['Nombre']}: {e}")
 
         else:
             # Si es "NO", actualizar las columnas en Excel con "NO"
-            book = load_workbook(path)
+            book = load_workbook(courses_path)
             sheet = book.active
             sheet.cell(row=row_index, column=9, value="NO")  # Columna "Se actualizo use lesson experience"
             sheet.cell(row=row_index, column=10, value="NO")  # Columna "Se tuvo que actualizar content template path"
-            book.save(path)
+            book.save(courses_path)
             book.close()
 
             print(f"\nCurso {row['Nombre']}: No requiere actualización de experiencia. Se actualiza el Excel con 'NO'.")
     else:
-        print(f"\n Maestro {maestro_value} no encontrado en el archivo UnidadesOrganización.xlsx. Se omite la actualización de experiencia.")
+        print(f"\n Maestro {maestro_value} no encontrado en el lookup de Unidades. Se omite la actualización de experiencia.")
             
-
-def duplicate_course(driver, course, index):
-    # access the course duplication page
+# The duplicate_course method receives the chromedriver, a row of the courses dataframe, 
+# the index of the course, the path of the courses file, the unidades_lookup and the banner_lookup.
+def duplicate_course(driver, course, index, courses_path, unidades_lookup, banner_lookup):
+    # access the course management page
     driver.get(
-        "https://virtual.upb.edu.co/d2l/tools/courseCreate/courseCreateType.asp?ou=6606"
+        "https://virtual.upb.edu.co/d2l/platformTools/Courses/6606/createCourse"
     )
 
     # STEP 1
     select_course_template(driver, course)
 
     # STEP 2
-    course_offering_details(driver, course)
+    select_course_semestre(driver, course)
 
     # STEP 3
+    course_offering_details(driver, course, banner_lookup)
+
+    # STEP 4-
     confirm_course_creation(driver)
 
-    # STEP 4
-    import_course_content(driver, course, index)
+    # STEP 5-
+    import_course_content(driver, course, index, courses_path)
     
-    # STEP 5
-    new_experience(driver, course)
+    # STEP 6-
+    new_experience(driver, course, courses_path, unidades_lookup)
 
     return
