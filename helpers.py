@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from time import sleep
+from datetime import timedelta
 import os
 import logging
 from openpyxl import load_workbook, Workbook
@@ -50,6 +51,22 @@ def is_empty_date_value(value):
 
     text = str(value).strip()
     return text == "" or text.lower() in {"nan", "none", "nat"}
+
+#valor de fecha es un string que puede venir con formatos extraños desde Banner,
+#esta función intenta parsearlo a un objeto date de Python, y si no se puede parsear, devuelve None
+def parse_banner_date(value):
+    parsed_date = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed_date):
+        return None
+    return parsed_date.date()
+
+# Función para obtener el día hábil anterior a una fecha dada, 
+# considerando fines de semana y un conjunto de días festivos
+def get_previous_business_day(date_value, holidays_set):
+    previous_day = date_value - timedelta(days=1)
+    while previous_day.weekday() >= 5 or previous_day in holidays_set:
+        previous_day -= timedelta(days=1)
+    return previous_day
 
 """The brightspace_login method receives three arguments: the chromedriver, the user and the password of the Virtual Campus admin.
 # If the login is succesful, it return True, otherwise, it returns False.
@@ -481,10 +498,6 @@ def select_course_semestre(driver, course):
     #
     #seleccionar el primer resultado (asumiendo que es el correcto)
     #
-    # 1) Host 1
-    #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
-    #shadow0 = host1.shadow_root
-
     # Host 1
     #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
     #shadow0 = host1.shadow_root
@@ -539,11 +552,12 @@ def select_course_semestre(driver, course):
 #
 # The course_offering_details method receives the chromedriver and a row of the courses dataframe.
 #
-def course_offering_details(driver, course, banner_lookup):
+def course_offering_details(driver, course, banner_lookup, holidays_set):
     # STEP 3. COURSE OFFERING DETAILS
 
     # Esperar a que cargue el formulario de detalles del curso (que también tiene shadow DOMs) y llenar los campos de nombre y código del curso
     wait = WebDriverWait(driver, 15)
+    holidays_set = holidays_set or set()
     valor_nombre = str(course["Nombre"]) #nombre del curso a ingresar, asegurando que sea texto limpio
 
     # 1) Host raíz
@@ -615,9 +629,8 @@ def course_offering_details(driver, course, banner_lookup):
             f"No fue posible extraer NRC/período desde el código del curso '{valor_codigo}'."
         )
 
-    # Buscar la fecha de inicio y fin en el lookup de Banner precargado
+    # Buscar la fecha de inicio y fin en el lookup de Banner precargado por clave de tupla (nrc, periodo) 
     banner_key = (nrc, periodo)
-
     banner_dates = banner_lookup.get(banner_key)
     if not banner_dates:
         raise ValueError(
@@ -641,12 +654,35 @@ def course_offering_details(driver, course, banner_lookup):
         )
         logger.error(date_error_msg)
         print(f"\nERROR: {date_error_msg}")
-  
+        raise ValueError(date_error_msg)
+
     # Si las fechas son válidas, proceder a ingresarlas en el formulario de Brightspace
     else:
-        #agregar la fecha de inicio 
-        valor_fecha_inicio = str(fecha_inicio)
-        valor_fecha_fin = str(fecha_fin)
+        fecha_inicio_date = parse_banner_date(fecha_inicio)
+        fecha_fin_date = parse_banner_date(fecha_fin)
+        if fecha_inicio_date is None or fecha_fin_date is None:
+            parse_error_msg = (
+                "No se pudieron parsear las fechas de Banner para "
+                f"NRC '{nrc}' y período '{periodo}'. "
+                f"Valores recibidos -> fecha_inicio: '{fecha_inicio}', fecha_fin: '{fecha_fin}'."
+            )
+            logger.error(parse_error_msg)
+            print(f"\nERROR: {parse_error_msg}")
+            raise ValueError(parse_error_msg)
+
+        # Ajustar la fecha de inicio al día hábil anterior antes de inicio parametrizado en Banner, considerando fines de semana y festivos
+        fecha_inicio_habil = get_previous_business_day(fecha_inicio_date, holidays_set)
+        business_day_msg = (
+            "Ajuste de fecha de inicio aplicado (día hábil anterior): "
+            f"NRC '{nrc}', período '{periodo}', "
+            f"inicio original '{fecha_inicio_date}', inicio LMS '{fecha_inicio_habil}'."
+        )
+        logger.info(business_day_msg)
+        print(f"\n{business_day_msg}")
+
+        #agregar la fecha de inicio Y fin - formateando las fechas al formato requerido por el input (YYYY-MM-DD)
+        valor_fecha_inicio = fecha_inicio_habil.strftime("%Y-%m-%d")
+        valor_fecha_fin = fecha_fin_date.strftime("%Y-%m-%d")
 
         # 1) Host raíz
         host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
@@ -791,7 +827,8 @@ def import_course_content(driver, course, index, courses_path):
    
     #ir a la pagina que importa el contenido del curso (la misma para todos los cursos, 
     #ya que el ID del curso se busca manualmente en la barra de búsqueda)
-    driver.get("https://virtual.upb.edu.co/d2l/lms/importExport/import_export.d2l?ou=" + brightspace_id)  #ID de curso genérico para importar contenido, el curso específico se selecciona en la barra de búsqueda
+    #ID de curso genérico para importar contenido, el curso específico se selecciona en la barra de búsqueda
+    driver.get("https://virtual.upb.edu.co/d2l/lms/importExport/import_export.d2l?ou=" + brightspace_id)  
 
     sleep(2)  # wait for the page to load
 
@@ -1066,8 +1103,8 @@ def new_experience(driver, row, courses_path, unidades_lookup):
         print(f"\n Maestro {maestro_value} no encontrado en el lookup de Unidades. Se omite la actualización de experiencia.")
             
 # The duplicate_course method receives the chromedriver, a row of the courses dataframe, 
-# the index of the course, the path of the courses file, the unidades_lookup and the banner_lookup.
-def duplicate_course(driver, course, index, courses_path, unidades_lookup, banner_lookup):
+# the index of the course, the path of the courses file, the unidades_lookup, the banner_lookup and holidays_set.
+def duplicate_course(driver, course, index, courses_path, unidades_lookup, banner_lookup, holidays_set):
     # access the course management page
     driver.get(
         "https://virtual.upb.edu.co/d2l/platformTools/Courses/6606/createCourse"
@@ -1080,7 +1117,7 @@ def duplicate_course(driver, course, index, courses_path, unidades_lookup, banne
     select_course_semestre(driver, course)
 
     # STEP 3
-    course_offering_details(driver, course, banner_lookup)
+    course_offering_details(driver, course, banner_lookup, holidays_set)
 
     # STEP 4-
     confirm_course_creation(driver)

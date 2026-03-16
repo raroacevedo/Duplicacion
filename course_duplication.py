@@ -10,7 +10,7 @@ import helpers
 
 # Constantes para la configuración de archivos y claves requeridas en el JSON de configuración
 CONFIG_FILE = "external_files.json"
-REQUIRED_FILE_KEYS = ("path", "unidades_path", "BDBANNER")
+REQUIRED_FILE_KEYS = ("path", "unidades_path", "BDBANNER", "HOLIDAYS_JSON")
 REQUIRED_CONFIG_KEYS = REQUIRED_FILE_KEYS + ("DIRLOGS",)
 
 # Configuración de logging con manejo de archivos y consola
@@ -135,6 +135,33 @@ def load_banner_lookup(banner_path):
 
     return banner_lookup
 
+# Cargar los días festivos de Colombia desde un archivo JSON 
+# y crear un conjunto de fechas para facilitar la verificación de días hábiles
+def load_colombia_holidays(holidays_json_path):
+    with open(holidays_json_path, "r", encoding="utf-8") as holidays_file:
+        holidays_data = json.load(holidays_file)
+
+    years_data = holidays_data.get("years", {})
+    if not isinstance(years_data, dict):
+        raise ValueError("El JSON de festivos tiene un formato inválido en la clave 'years'.")
+
+    holiday_dates = set()
+    for _, months_data in years_data.items():
+        if not isinstance(months_data, dict):
+            continue
+
+        for _, dates_list in months_data.items():
+            if not isinstance(dates_list, list):
+                continue
+
+            for holiday_date in dates_list:
+                date_text = str(holiday_date).strip()
+                if not date_text:
+                    continue
+                holiday_dates.add(datetime.strptime(date_text, "%Y-%m-%d").date())
+
+    return holiday_dates
+
 # Función principal que orquesta la ejecución del programa, incluyendo la carga de configuraciones, validación de archivos,
 # precarga de datos, manejo del driver de Chrome, iteración sobre los cursos y manejo de excepc
 def main():
@@ -147,19 +174,23 @@ def main():
             logging.error("Validación de archivos obligatorios fallida. Proceso detenido.")
             return
 
-        courses_path = files_config["path"]
-        unidades_path = files_config["unidades_path"]
-        banner_path = files_config["BDBANNER"]
+        courses_path = files_config["path"]                # Ruta del archivo Excel de cursos a procesar, obtenida del JSON de configuración
+        unidades_path = files_config["unidades_path"]      # Ruta del archivo Excel de unidades de organización, obtenida del JSON de configuración
+        banner_path = files_config["BDBANNER"]             # Ruta del archivo Excel de datos de Banner, obtenida del JSON de configuración
+        holidays_json_path = files_config["HOLIDAYS_JSON"] # Ruta del archivo JSON de días festivos de Colombia, obtenida del JSON de configuración
 
         print("Cargando datos de unidades de organización...")
         unidades_lookup = load_unidades_lookup(unidades_path)
         print("Cargando datos de Banner...")
         banner_lookup = load_banner_lookup(banner_path)
+        print("Cargando festivos de Colombia...")
+        holidays_set = load_colombia_holidays(holidays_json_path)
 
         logging.info(
-            "Datos precargados: %s maestros en unidades y %s registros de Banner.",
+            "Datos precargados: %s maestros, %s registros Banner y %s festivos.",
             len(unidades_lookup),
             len(banner_lookup),
+            len(holidays_set),
         )
 
         driver = None
@@ -174,7 +205,7 @@ def main():
 
             # Leer el archivo Excel asegurando que los nombres de columnas no tengan espacios extra
             courses = pd.read_excel(courses_path, sheet_name=0)
-            courses.columns = courses.columns.str.strip()  # Limpiar espacios en nombres de columnas
+            courses.columns = courses.columns.str.strip()  
 
             # Verificar si el archivo está vacío
             if courses.empty:
@@ -191,7 +222,7 @@ def main():
 
             total_courses = len(courses)
 
-            # Iterar sobre cada fila del DataFrame
+            # Iterar sobre cada fila del DataFrame cursos a crear los cursos en Brightspace
             for index, row in courses.iterrows():
                 percentage = ((index + 1) / len(courses)) * 100
                 logging.info(
@@ -203,7 +234,8 @@ def main():
                 )
 
                 try:
-                    helpers.duplicate_course(driver, row, index, courses_path, unidades_lookup, banner_lookup)
+                    helpers.duplicate_course(driver,row,index,courses_path,unidades_lookup,banner_lookup,holidays_set,)
+                    
                     logging.info(
                         "Iteración %s/%s completada correctamente.",
                         index + 1,
