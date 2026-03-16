@@ -88,33 +88,10 @@ def validate_required_files(files_config):
     return len(missing_files) == 0
 
 
-def normalize_banner_nrc(value):
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none"}:
-        return ""
-    if text.endswith(".0"):
-        text = text[:-2]
-    return text
-
-
-def normalize_banner_periodo(value):
-    if pd.isna(value):
-        return ""
-
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none"}:
-        return ""
-
-    try:
-        return str(int(float(text)))
-    except (TypeError, ValueError):
-        digits = "".join(ch for ch in text if ch.isdigit())
-        return digits if digits else text
-
 # Cargar los datos de unidades desde el archivo Excel y crear un diccionario de búsqueda 
 # para facilitar el acceso a los nombres de las unidades por su código
 def load_unidades_lookup(unidades_path):
-    unidades_df = pd.read_excel(unidades_path, dtype={"Code": str})
+    unidades_df = pd.read_excel(unidades_path, dtype={"Code": str, "Name": str})
     required_cols = {"Code", "Name"}
     missing_cols = required_cols - set(unidades_df.columns)
     if missing_cols:
@@ -123,17 +100,18 @@ def load_unidades_lookup(unidades_path):
             + ", ".join(sorted(missing_cols))
         )
 
-    clean_df = unidades_df.loc[:, ["Code", "Name"]].dropna(subset=["Code"]).copy()
-    clean_df["Code"] = clean_df["Code"].astype(str).str.strip()
-    clean_df["Name"] = clean_df["Name"].astype(str).str.strip()
-    clean_df = clean_df[clean_df["Code"].str.lower() != "nan"]
+    clean_df = unidades_df.loc[:, ["Code", "Name"]].dropna(subset=["Code"]).copy() # Eliminar filas donde "Code" es NaN
+    #clean_df["Code"] = clean_df["Code"].astype(str).str.strip()
+    #clean_df["Name"] = clean_df["Name"].astype(str).str.strip()
+    #clean_df = clean_df[clean_df["Code"].str.lower() != "nan"] 
 
     return dict(zip(clean_df["Code"], clean_df["Name"]))
 
 # Cargar los datos de Banner desde el archivo Excel y crear un diccionario de búsqueda
 # que permita acceder a las fechas de inicio y fin de curso por combinación de lista cruzada y periodo
 def load_banner_lookup(banner_path):
-    banner_df = pd.read_excel(banner_path, sheet_name=0) # Asegurando que se lea la primera hoja del archivo de Banner
+    # Asegurando que se lea la primera hoja del archivo de Banner y que las columnas de interés se lean como texto para evitar problemas de formato
+    banner_df = pd.read_excel(banner_path, sheet_name=0, dtype={"LISTA_CRUZADA": str, "PERIODO": str}) 
     required_cols = {"LISTA_CRUZADA", "PERIODO", "FECHA_INICIO_CURSO", "FECHA_FIN_CURSO"}
     missing_cols = required_cols - set(banner_df.columns)
     if missing_cols:
@@ -142,14 +120,14 @@ def load_banner_lookup(banner_path):
             + ", ".join(sorted(missing_cols))
         )
     
-    clean_df = banner_df.loc[
-        :, ["LISTA_CRUZADA", "PERIODO", "FECHA_INICIO_CURSO", "FECHA_FIN_CURSO"]
-    ].copy()
+    # Limpiar y normalizar los datos de Banner para asegurar que las claves de búsqueda sean consistentes
+    clean_df = banner_df.loc[:, ["LISTA_CRUZADA", "PERIODO", "FECHA_INICIO_CURSO", "FECHA_FIN_CURSO"]].copy()
 
     banner_lookup = {}
     for row in clean_df.itertuples(index=False):
-        nrc = normalize_banner_nrc(row.LISTA_CRUZADA)
-        periodo = normalize_banner_periodo(row.PERIODO)
+
+        nrc=row.LISTA_CRUZADA
+        periodo=row.PERIODO
         if not nrc or not periodo:
             continue
 

@@ -43,6 +43,14 @@ def normalize_banner_periodo(value):
         digits = "".join(ch for ch in text if ch.isdigit())
         return digits if digits else text
 
+# Función para verificar si un valor de fecha es vacío o no válido (NaN, None, etc.)
+def is_empty_date_value(value):
+    if pd.isna(value):
+        return True
+
+    text = str(value).strip()
+    return text == "" or text.lower() in {"nan", "none", "nat"}
+
 """The brightspace_login method receives three arguments: the chromedriver, the user and the password of the Virtual Campus admin.
 # If the login is succesful, it return True, otherwise, it returns False.
 """
@@ -592,8 +600,8 @@ def course_offering_details(driver, course, banner_lookup):
     #
 
     #Desde este codigo se busca el NRC es el dato despues del ultimo "-" 
-    # y se extrae el periodo desde el mismo codigo esta despeus del segundo guion, 
-    # asegurar que es los primero 6 digitos, por ejemplo: CODIGO-202440-12345 -> periodo: 202440, NRC: 12345
+    #y se extrae el periodo desde el mismo codigo esta despeus del segundo guion, 
+    #asegurar que es los primero 6 digitos, por ejemplo: CODIGO-202440-12345 -> periodo: 202440, NRC: 12345
     codigo_parts = valor_codigo.split("-")
     if len(codigo_parts) < 2:
         raise ValueError(
@@ -619,76 +627,93 @@ def course_offering_details(driver, course, banner_lookup):
 
     fecha_inicio, fecha_fin = banner_dates
 
-    #agregar la fecha de inicio 
-    valor_fecha_inicio = str(fecha_inicio)
-    valor_fecha_fin = str(fecha_fin)
+    # Validar que las fechas no estén vacías o con valores no válidos antes de intentar ingresarlas
+    missing_date_fields = []
+    if is_empty_date_value(fecha_inicio): missing_date_fields.append("fecha_inicio")
+    if is_empty_date_value(fecha_fin): missing_date_fields.append("fecha_fin")
 
-    # 1) Host raíz
-    host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
-    shadow0 = host1.shadow_root
-
-    # 2) Vista principal
-    host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
-    shadow1 = host2.shadow_root
-
-    # 3) Componente de rango de fechas
-    date_range_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "#date-range-input"))
-
-    # 4) Buscar todos los inputs profundos dentro del shadow DOM
-    inputs = find_inputs_deep(driver, date_range_host)
-
-    # 5) Filtrar inputs visibles/habilitados
-    valid_inputs = []
-    for inp in inputs:
-        try:
-            if inp.is_displayed() and inp.is_enabled():
-                valid_inputs.append(inp)
-        except Exception:
-            continue
-
-    if not valid_inputs:
-        raise Exception(
-            "No se encontraron inputs visibles y habilitados dentro de #date-range-input. "
-            "El componente puede no haber terminado de renderizar o su estructura cambió."
+    if missing_date_fields:
+        date_error_msg = (
+            "Datos de fecha vacíos en Banner para "
+            f"NRC '{nrc}' y período '{periodo}'. "
+            f"Campos vacíos: {', '.join(missing_date_fields)}. "
+            f"Valores recibidos -> fecha_inicio: '{fecha_inicio}', fecha_fin: '{fecha_fin}'."
         )
+        logger.error(date_error_msg)
+        print(f"\nERROR: {date_error_msg}")
+  
+    # Si las fechas son válidas, proceder a ingresarlas en el formulario de Brightspace
+    else:
+        #agregar la fecha de inicio 
+        valor_fecha_inicio = str(fecha_inicio)
+        valor_fecha_fin = str(fecha_fin)
 
-    # 6) Tomar el primer input como fecha inicio
-    fecha_inicio_input = valid_inputs[0]
+        # 1) Host raíz
+        host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
+        shadow0 = host1.shadow_root
 
-    # 6) Tomar el segundo input como fecha final
-    fecha_fin_input = valid_inputs[1]
+        # 2) Vista principal
+        host2 = wait.until(lambda d: shadow0.find_element(By.CSS_SELECTOR, "d2l-create-course-view"))
+        shadow1 = host2.shadow_root
 
-    # 7) Limpiar y escribir la fecha de inicio (con manejo de excepciones para inputs difíciles)
-    try:
-        fecha_inicio_input.click()
-        fecha_inicio_input.send_keys(Keys.CONTROL, "a")
-        fecha_inicio_input.send_keys(Keys.BACKSPACE)
-        fecha_inicio_input.send_keys(valor_fecha_inicio)
-    except Exception:
-        driver.execute_script("""
-            const el = arguments[0];
-            const value = arguments[1];
-            el.focus();
-            el.value = value;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-        """, fecha_inicio_input, valor_fecha_inicio)
-    
-    # 8) Limpiar y escribir la fecha de fin (con manejo de excepciones para inputs difíciles)
-    try:
-        fecha_fin_input.click()
-        fecha_fin_input.send_keys(Keys.CONTROL, "a")
-        fecha_fin_input.send_keys(Keys.BACKSPACE)
-        fecha_fin_input.send_keys(valor_fecha_fin)
-    except Exception:
-        driver.execute_script("""
-            const el = arguments[0];
-            const value = arguments[1];
-            el.focus();
-            el.value = value;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-        """, fecha_fin_input, valor_fecha_fin)
+        # 3) Componente de rango de fechas
+        date_range_host = wait.until(lambda d: shadow1.find_element(By.CSS_SELECTOR, "#date-range-input"))
+
+        # 4) Buscar todos los inputs profundos dentro del shadow DOM
+        inputs = find_inputs_deep(driver, date_range_host)
+
+        # 5) Filtrar inputs visibles/habilitados
+        valid_inputs = []
+        for inp in inputs:
+            try:
+                if inp.is_displayed() and inp.is_enabled():
+                    valid_inputs.append(inp)
+            except Exception:
+                continue
+
+        if not valid_inputs:
+            raise Exception(
+                "No se encontraron inputs visibles y habilitados dentro de #date-range-input. "
+                "El componente puede no haber terminado de renderizar o su estructura cambió."
+            )
+
+        # 6) Tomar el primer input como fecha inicio
+        fecha_inicio_input = valid_inputs[0]
+
+        # 6) Tomar el segundo input como fecha final
+        fecha_fin_input = valid_inputs[1]
+
+        # 7) Limpiar y escribir la fecha de inicio (con manejo de excepciones para inputs difíciles)
+        try:
+            fecha_inicio_input.click()
+            fecha_inicio_input.send_keys(Keys.CONTROL, "a")
+            fecha_inicio_input.send_keys(Keys.BACKSPACE)
+            fecha_inicio_input.send_keys(valor_fecha_inicio)
+        except Exception:
+            driver.execute_script("""
+                const el = arguments[0];
+                const value = arguments[1];
+                el.focus();
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            """, fecha_inicio_input, valor_fecha_inicio)
+        
+        # 8) Limpiar y escribir la fecha de fin (con manejo de excepciones para inputs difíciles)
+        try:
+            fecha_fin_input.click()
+            fecha_fin_input.send_keys(Keys.CONTROL, "a")
+            fecha_fin_input.send_keys(Keys.BACKSPACE)
+            fecha_fin_input.send_keys(valor_fecha_fin)
+        except Exception:
+            driver.execute_script("""
+                const el = arguments[0];
+                const value = arguments[1];
+                el.focus();
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            """, fecha_fin_input, valor_fecha_fin)
 
     sleep(2)
 
