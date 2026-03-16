@@ -101,9 +101,6 @@ def load_unidades_lookup(unidades_path):
         )
 
     clean_df = unidades_df.loc[:, ["Code", "Name"]].dropna(subset=["Code"]).copy() # Eliminar filas donde "Code" es NaN
-    #clean_df["Code"] = clean_df["Code"].astype(str).str.strip()
-    #clean_df["Name"] = clean_df["Name"].astype(str).str.strip()
-    #clean_df = clean_df[clean_df["Code"].str.lower() != "nan"] 
 
     return dict(zip(clean_df["Code"], clean_df["Name"]))
 
