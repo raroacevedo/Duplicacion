@@ -592,8 +592,8 @@ def course_offering_details(driver, course, banner_lookup):
     #
 
     #Desde este codigo se busca el NRC es el dato despues del ultimo "-" 
-    # y se extrae el periodo desde el mismo codigo esta despeus del segundo guion, 
-    # asegurar que es los primero 6 digitos, por ejemplo: CODIGO-202440-12345 -> periodo: 202440, NRC: 12345
+    #y se extrae el periodo desde el mismo codigo esta despeus del segundo guion, 
+    #asegurar que es los primero 6 digitos, por ejemplo: CODIGO-202440-12345 -> periodo: 202440, NRC: 12345
     codigo_parts = valor_codigo.split("-")
     if len(codigo_parts) < 2:
         raise ValueError(
