@@ -22,7 +22,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-
+# Funciones de normalización para extraer NRC y período desde el código del curso
 def normalize_banner_nrc(value):
     text = str(value).strip()
     if not text or text.lower() in {"nan", "none"}:
@@ -31,7 +31,8 @@ def normalize_banner_nrc(value):
         text = text[:-2]
     return text
 
-
+# El período en Banner a menudo viene con formato "202440.0" o similar, 
+# así que esta función limpia el texto y extrae solo los dígitos relevantes
 def normalize_banner_periodo(value):
     text = str(value).strip()
     if not text or text.lower() in {"nan", "none"}:
@@ -279,8 +280,6 @@ def select_course_template(driver, course):
     #
     valorplantilla = str(course["Plantilla"])
 
-    print(f"Seleccionando plantilla: {valorplantilla}")
-
     # Host 1
     host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
     shadow0 = host1.shadow_root
@@ -432,8 +431,6 @@ def select_course_semestre(driver, course):
     # Obtener el valor del semestre a seleccionar desde el DataFrame y asignarlo a una variable, asegurando que sea texto limpio
     #
     valor_semestre = str(course["Semestre"])
-
-    print(f"Seleccionando semestre: {valor_semestre}")
 
     # Host 1
     #host1 = wait.until(lambda d: d.find_element(By.CSS_SELECTOR, "#LitId"))
