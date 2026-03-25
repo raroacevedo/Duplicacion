@@ -108,7 +108,7 @@ def load_unidades_lookup(unidades_path):
 # que permita acceder a las fechas de inicio y fin de curso por combinación de lista cruzada y periodo
 def load_banner_lookup(banner_path):
     # Asegurando que se lea la primera hoja del archivo de Banner y que las columnas de interés se lean como texto para evitar problemas de formato
-    banner_df = pd.read_excel(banner_path, sheet_name=0, dtype={"LISTA_CRUZADA": str, "PERIODO": str}) 
+    banner_df = pd.read_excel(banner_path, sheet_name="Docentes", dtype={"LISTA_CRUZADA": str, "PERIODO": str}) 
     required_cols = {"LISTA_CRUZADA", "PERIODO", "FECHA_INICIO_CURSO", "FECHA_FIN_CURSO"}
     missing_cols = required_cols - set(banner_df.columns)
     if missing_cols:
