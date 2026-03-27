@@ -102,12 +102,15 @@ def load_unidades_lookup(unidades_path):
 
     clean_df = unidades_df.loc[:, ["Code", "Name"]].dropna(subset=["Code"]).copy() # Eliminar filas donde "Code" es NaN
 
+    #Filtrar filas por el Type="Course Offering" y IsActive=TRUE
+    clean_df = clean_df[(clean_df["Type"] == "Course Offering") & (clean_df["IsActive"] == "TRUE")]
+    
     return dict(zip(clean_df["Code"], clean_df["Name"]))
 
 # Cargar los datos de Banner desde el archivo Excel y crear un diccionario de búsqueda
 # que permita acceder a las fechas de inicio y fin de curso por combinación de lista cruzada y periodo
 def load_banner_lookup(banner_path):
-    # Asegurando que se lea la primera hoja del archivo de Banner y que las columnas de interés se lean como texto para evitar problemas de formato
+    # Asegurando que se lea la primera hoja ("Docentes") del archivo de Banner y que las columnas de interés se lean como texto para evitar problemas de formato
     banner_df = pd.read_excel(banner_path, sheet_name="Docentes", dtype={"LISTA_CRUZADA": str, "PERIODO": str}) 
     required_cols = {"LISTA_CRUZADA", "PERIODO", "FECHA_INICIO_CURSO", "FECHA_FIN_CURSO"}
     missing_cols = required_cols - set(banner_df.columns)
