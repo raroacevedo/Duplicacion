@@ -71,7 +71,7 @@ No cubre:
 
 **Tipo:** `string`  
 **Obligatoria:** si  
-**Que representa:** archivo Excel de unidades organizacionales (fuente de referencia para identificar QM).  
+**Que representa:** archivo Excel de unidades organizacionales (fuente de referencia para identificar QM). Se filtra por el Type="Course Offering" y IsActive=TRUE
 **Uso en el sistema:** determina si cada maestro es QM y define comportamiento de configuracion posterior.
 
 ### Recomendaciones
