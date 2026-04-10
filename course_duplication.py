@@ -91,21 +91,33 @@ def validate_required_files(files_config):
 # Cargar los datos de unidades desde el archivo Excel y crear un diccionario de búsqueda 
 # para facilitar el acceso a los nombres de las unidades por su código
 def load_unidades_lookup(unidades_path):
-    unidades_df = pd.read_excel(unidades_path, dtype={"Code": str, "Name": str})
-    required_cols = {"Code", "Name"}
+    # 1. Cargar el DataFrame
+    unidades_df = pd.read_excel(unidades_path, dtype={"Code": str, "Name": str, "Type": str})
+
+    # 2. Validar columnas requeridas
+    required_cols = {"Code", "Name", "Type", "IsActive" }
     missing_cols = required_cols - set(unidades_df.columns)
     if missing_cols:
+        
         raise ValueError(
             "El archivo de unidades no tiene las columnas requeridas: "
             + ", ".join(sorted(missing_cols))
         )
-
-    clean_df = unidades_df.loc[:, ["Code", "Name"]].dropna(subset=["Code"]).copy() # Eliminar filas donde "Code" es NaN
-
-    #Filtrar filas por el Type="Course Offering" y IsActive=TRUE
-    clean_df = clean_df[(clean_df["Type"] == "Course Offering") & (clean_df["IsActive"] == "TRUE")]
     
-    return dict(zip(clean_df["Code"], clean_df["Name"]))
+    # 3. Eliminar filas con código nulo primero (optimización para no procesar basura)
+    clean_df = unidades_df.dropna(subset=["Code"]).copy()
+    
+    # 4. Crear las máscaras de filtrado
+    mask_type = clean_df["Type"] == "Course Offering"
+    
+    # Convertimos a string, eliminamos espacios y pasamos a minúsculas para garantizar el match.
+    mask_active = clean_df["IsActive"].astype(str).str.strip().str.lower() == "true"
+    
+    # 5. Aplicar filtros
+    filtered_df = clean_df[mask_type & mask_active]
+    
+    # 6. Retornar el diccionario
+    return dict(zip(filtered_df["Code"], filtered_df["Name"]))
 
 # Cargar los datos de Banner desde el archivo Excel y crear un diccionario de búsqueda
 # que permita acceder a las fechas de inicio y fin de curso por combinación de lista cruzada y periodo
